@@ -27,6 +27,33 @@ def format_dmg_result(result: DmgResult) -> str:
     return result.format()
 
 
+def add_chunked_fields(embed: discord.Embed, results: list, field_name: str = "") -> None:
+    """Add results to embed, splitting across multiple fields if needed (1024 char limit)."""
+    current_chunk = []
+    current_length = 0
+    field_count = 0
+    
+    for result in results:
+        result_length = len(result) + 1  # +1 for newline
+        
+        if current_length + result_length > 1020:  # Leave some margin
+            # Save current chunk and start new one
+            if current_chunk:
+                name = field_name if field_count == 0 else ""
+                embed.add_field(name=name, value="\n".join(current_chunk), inline=False)
+                field_count += 1
+            current_chunk = [result]
+            current_length = result_length
+        else:
+            current_chunk.append(result)
+            current_length += result_length
+    
+    # Add remaining chunk
+    if current_chunk:
+        name = field_name if field_count == 0 else ""
+        embed.add_field(name=name, value="\n".join(current_chunk), inline=False)
+
+
 @bot.event
 async def on_ready():
     print(f'{bot.user} connected to Discord!')
@@ -48,9 +75,6 @@ async def roll_command(ctx, *, args: str = ""):
     """Roll with modifier applied to each die."""
     try:
         repeat_count, dice_expr = parse_roll_command(args)
-        if repeat_count > 20:
-            await ctx.send("Cannot roll more than 20 times!")
-            return
         
         results = []
         for i in range(repeat_count):
@@ -58,15 +82,15 @@ async def roll_command(ctx, *, args: str = ""):
             result_str = format_roll_result(result)
             
             if repeat_count == 1:
-                results.append(result_str)
+                results.append(f"**Result:** {result_str}")
             else:
                 results.append(f"**Roll #{i+1}:**\n{result_str}")
         
         embed = discord.Embed(
-            title=f"Rolling {dice_expr.upper()}" + (f" x{repeat_count}" if repeat_count > 1 else ""),
+            title=f"🎲 Rolling {dice_expr.upper()}" + (f" x{repeat_count}" if repeat_count > 1 else ""),
             color=0x5865F2
         )
-        embed.add_field(name="Results", value="\n".join(results), inline=False)
+        add_chunked_fields(embed, results)
         embed.set_footer(text=f"Rolled by {ctx.author.display_name}")
         await ctx.send(embed=embed)
         
@@ -79,9 +103,6 @@ async def dmg_command(ctx, *, args: str = ""):
     """Roll damage - sum all dice, then add modifier."""
     try:
         repeat_count, dice_expr = parse_roll_command(args)
-        if repeat_count > 20:
-            await ctx.send("Cannot roll more than 20 times!")
-            return
         
         results = []
         grand_total = 0
@@ -91,7 +112,7 @@ async def dmg_command(ctx, *, args: str = ""):
             grand_total += result.total
             
             if repeat_count == 1:
-                results.append(result_str)
+                results.append(f"**Result:** {result_str}")
             else:
                 results.append(f"**Roll #{i+1}:**\n{result_str}")
         
@@ -99,10 +120,10 @@ async def dmg_command(ctx, *, args: str = ""):
             results.append(f"\n**Total Damage: {grand_total}**")
         
         embed = discord.Embed(
-            title=f"Damage: {dice_expr.upper()}" + (f" x{repeat_count}" if repeat_count > 1 else ""),
+            title=f"⚔️ Damage: {dice_expr.upper()}" + (f" x{repeat_count}" if repeat_count > 1 else ""),
             color=0xFF4444
         )
-        embed.add_field(name="Results", value="\n".join(results), inline=False)
+        add_chunked_fields(embed, results)
         embed.set_footer(text=f"Rolled by {ctx.author.display_name}")
         await ctx.send(embed=embed)
         
@@ -111,28 +132,25 @@ async def dmg_command(ctx, *, args: str = ""):
 
 
 @bot.command(name='rolladv', aliases=['adv', 'ra'])
-async def roll_advantage(ctx, *, args: str = "1d20"):
+async def roll_advantage(ctx, *, args: str = ""):
     """Roll with advantage."""
     try:
         repeat_count, dice_expr = parse_roll_command(args)
-        if repeat_count > 20:
-            await ctx.send("Cannot roll more than 20 times!")
-            return
         
         results = []
         for i in range(repeat_count):
             roll1, roll2, higher, higher_total = roll_with_advantage(dice_expr)
             
             if repeat_count == 1:
-                results.append(f"Roll a: {roll1.format()}\nRoll b: {roll2.format()}\nResult: {higher_total} (higher)")
+                results.append(f"Roll a: {roll1.format()}\nRoll b: {roll2.format()}\n**Result: {higher_total}** (higher)")
             else:
-                results.append(f"Roll #{i+1}: {roll1.format()} | {roll2.format()} -> {higher_total}")
+                results.append(f"**Roll #{i+1}:** {roll1.format()} | {roll2.format()} → {higher_total}")
         
         embed = discord.Embed(
-            title=f"Advantage: {dice_expr.upper()}" + (f" x{repeat_count}" if repeat_count > 1 else ""),
+            title=f"🍀 Advantage: {dice_expr.upper()}" + (f" x{repeat_count}" if repeat_count > 1 else ""),
             color=0x00FF00
         )
-        embed.add_field(name="Results", value="\n".join(results), inline=False)
+        add_chunked_fields(embed, results)
         embed.set_footer(text=f"Rolled by {ctx.author.display_name}")
         await ctx.send(embed=embed)
         
@@ -141,28 +159,25 @@ async def roll_advantage(ctx, *, args: str = "1d20"):
 
 
 @bot.command(name='rolldis', aliases=['dis', 'rd'])
-async def roll_disadvantage(ctx, *, args: str = "1d20"):
+async def roll_disadvantage(ctx, *, args: str = ""):
     """Roll with disadvantage."""
     try:
         repeat_count, dice_expr = parse_roll_command(args)
-        if repeat_count > 20:
-            await ctx.send("Cannot roll more than 20 times!")
-            return
         
         results = []
         for i in range(repeat_count):
             roll1, roll2, lower, lower_total = roll_with_disadvantage(dice_expr)
             
             if repeat_count == 1:
-                results.append(f"Roll a: {roll1.format()}\nRoll b: {roll2.format()}\nResult: {lower_total} (lower)")
+                results.append(f"Roll a: {roll1.format()}\nRoll b: {roll2.format()}\n**Result: {lower_total}** (lower)")
             else:
-                results.append(f"Roll #{i+1}: {roll1.format()} | {roll2.format()} -> {lower_total}")
+                results.append(f"**Roll #{i+1}:** {roll1.format()} | {roll2.format()} → {lower_total}")
         
         embed = discord.Embed(
-            title=f"Disadvantage: {dice_expr.upper()}" + (f" x{repeat_count}" if repeat_count > 1 else ""),
+            title=f"💀 Disadvantage: {dice_expr.upper()}" + (f" x{repeat_count}" if repeat_count > 1 else ""),
             color=0xFF6600
         )
-        embed.add_field(name="Results", value="\n".join(results), inline=False)
+        add_chunked_fields(embed, results)
         embed.set_footer(text=f"Rolled by {ctx.author.display_name}")
         await ctx.send(embed=embed)
         
@@ -217,31 +232,31 @@ async def roll_character_stats_command(ctx, *, args: str = ""):
 
 @bot.command(name='help_dice', aliases=['dicehelp', 'commands'])
 async def help_dice(ctx):
-    embed = discord.Embed(title="D&D Dice Bot Commands", color=0x5865F2)
+    embed = discord.Embed(title="🎲 D&D Dice Bot Commands", color=0x5865F2)
     
     embed.add_field(
-        name="!roll [n] <dice>",
-        value="Per-die modifiers: `3d6+2` = each die +2\n`!roll 5 1d20+3`",
+        name="!roll / !r [n] [dice]",
+        value="Default: `1d20`\n`!r` → 1d20\n`!r d20` → 1d20\n`!r +5` → 1d20+5\n`!r 10` → 10x 1d20\n`!r 5 +3` → 5x 1d20+3\n`!r 2d6+3` → per-die modifier",
         inline=False
     )
     embed.add_field(
-        name="!dmg [n] <dice>",
-        value="Damage roll: sum all, then add modifier\n`!dmg 1d12+2d6+5`",
+        name="!dmg / !d [n] [dice]",
+        value="Damage roll: sum all, then add modifier\n`!d 1d12+2d6+5`",
         inline=False
     )
     embed.add_field(
-        name="!rolladv / !rolldis",
-        value="Advantage/disadvantage rolls",
+        name="!rolladv (!ra) / !rolldis (!rd)",
+        value="Advantage/disadvantage (default: 1d20)\n`!ra` → advantage 1d20\n`!ra +5` → advantage 1d20+5",
         inline=False
     )
     embed.add_field(
-        name="!char [n]",
+        name="!char / !c [n]",
         value="Character stats (4d6 drop lowest)",
         inline=False
     )
     embed.add_field(
         name="Prefixes",
-        value="Use `!` `-` `/` or `\\`",
+        value="`!` `-` `/` `\\`",
         inline=False
     )
     

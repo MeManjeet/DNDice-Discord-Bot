@@ -17,22 +17,66 @@ class RollResult:
     modifier: int
     modified_rolls: List[List[int]]  # Each pool's modified rolls
     
+    def _format_roll(self, base_roll: int, modified_roll: int, sides: int) -> str:
+        """Format a single roll with special handling for d20 nat 1/20."""
+        if sides == 20:
+            if base_roll == 20:
+                return f"**{modified_roll}**"  # Nat 20 - bold the result
+            elif base_roll == 1:
+                return "**Nat1**"  # Nat 1 - no modifier applied
+        return str(modified_roll)
+    
+    def _get_sides(self, notation: str) -> int:
+        """Extract die sides from notation like '1d20' or '2d6'."""
+        import re
+        match = re.search(r'd(\d+)', notation.lower())
+        return int(match.group(1)) if match else 0
+    
     def format(self) -> str:
         if self.modifier == 0:
             parts = []
             for notation, rolls in self.dice_pools:
-                rolls_str = ", ".join(str(r) for r in rolls)
+                sides = self._get_sides(notation)
+                formatted_rolls = []
+                for r in rolls:
+                    if sides == 20 and r == 20:
+                        formatted_rolls.append("**20**")
+                    elif sides == 20 and r == 1:
+                        formatted_rolls.append("**Nat1**")
+                    else:
+                        formatted_rolls.append(str(r))
+                rolls_str = ", ".join(formatted_rolls)
                 parts.append(f"{notation.upper()} Result - ({rolls_str})")
             return "\n".join(parts)
         else:
             mod_sign = "+" if self.modifier > 0 else ""
             parts = []
             for idx, (notation, base_rolls) in enumerate(self.dice_pools):
+                sides = self._get_sides(notation)
                 modified = self.modified_rolls[idx]
-                base_str = ", ".join(str(r) for r in base_rolls)
-                calc_parts = [f"({r}{mod_sign}{self.modifier})" for r in base_rolls]
-                result_str = ", ".join(str(r) for r in modified)
-                parts.append(f"{notation.upper()} Result - ({base_str}) = {' '.join(calc_parts)} = ({result_str})")
+                
+                base_parts = []
+                calc_parts = []
+                result_parts = []
+                
+                for i, base_roll in enumerate(base_rolls):
+                    if sides == 20 and base_roll == 20:
+                        base_parts.append("**20**")
+                        calc_parts.append(f"(**20**{mod_sign}{self.modifier})")
+                        result_parts.append(f"**{modified[i]}**")
+                    elif sides == 20 and base_roll == 1:
+                        base_parts.append("**Nat1**")
+                        calc_parts.append("(**Nat1**)")
+                        result_parts.append("**Nat1**")
+                    else:
+                        base_parts.append(str(base_roll))
+                        calc_parts.append(f"({base_roll}{mod_sign}{self.modifier})")
+                        result_parts.append(str(modified[i]))
+                
+                base_str = ", ".join(base_parts)
+                calc_str = " ".join(calc_parts)
+                result_str = ", ".join(result_parts)
+                parts.append(f"{notation.upper()} Result - ({base_str}) = {calc_str} = ({result_str})")
             return "\n".join(parts)
 
 
@@ -212,31 +256,81 @@ def roll_character_stats() -> List[Tuple[List[int], int]]:
 
 
 def parse_roll_command(args: str) -> Tuple[int, str]:
-    """Parse repeat count and dice expression."""
+    """
+    Parse repeat count and dice expression with smart defaults.
+    
+    Examples:
+        "" or "d20"        -> (1, "1d20")
+        "+3" or "+ 3"      -> (1, "1d20+3")
+        "10"               -> (10, "1d20")
+        "10 +2"            -> (10, "1d20+2")
+        "2d6+3"            -> (1, "2d6+3")
+        "5 2d6+3"          -> (5, "2d6+3")
+    """
     args = args.strip()
     
+    # Empty args -> default 1d20
     if not args:
-        raise ValueError("Missing dice notation! Usage: !roll [count] <dice>")
+        return 1, "1d20"
+    
+    # Normalize spaces around +/- but preserve them for detection
+    # Check if starts with +/- (modifier only, no dice)
+    normalized = args.replace(" ", "")
+    
+    # Case: just a modifier like "+3" or "-5" -> 1d20 with that modifier
+    if re.match(r'^[+-]\d+$', normalized):
+        return 1, f"1d20{normalized}"
+    
+    # Case: starts with +/- but has more (like "+ 3" with space)
+    if args.lstrip().startswith('+') or args.lstrip().startswith('-'):
+        # Extract the modifier part
+        mod_match = re.match(r'^([+-])\s*(\d+)(.*)$', args.strip())
+        if mod_match:
+            sign, num, rest = mod_match.groups()
+            rest = rest.strip()
+            if not rest:
+                # Just modifier: "+3" -> 1d20+3
+                return 1, f"1d20{sign}{num}"
+            elif 'd' in rest.lower():
+                # Modifier then dice? Weird but handle: "+3 2d6" -> probably an error
+                raise ValueError("Put dice notation before modifier: e.g., 2d6+3")
     
     tokens = args.split()
-    first_token = tokens[0].lower()
+    first_token = tokens[0].strip()
     
+    # Case: first token is just a number -> repeat count for 1d20
     if first_token.isdigit():
-        if len(tokens) < 2:
-            raise ValueError("Missing dice after count!")
-        
         repeat_count = int(first_token)
-        dice_expr = "".join(tokens[1:]).replace(" ", "")
+        if repeat_count < 1 or repeat_count > 20:
+            raise ValueError("Repeat count must be 1-20")
         
-        if 'd' not in dice_expr.lower():
-            raise ValueError("Invalid dice notation!")
+        if len(tokens) == 1:
+            # Just "10" -> 10x 1d20
+            return repeat_count, "1d20"
         
-        return repeat_count, dice_expr
-    else:
-        dice_expr = args.replace(" ", "")
-        if 'd' not in dice_expr.lower():
-            raise ValueError("Invalid dice notation!")
+        # Rest of tokens form the dice expression
+        rest = "".join(tokens[1:]).replace(" ", "")
+        
+        # Check if rest is just a modifier
+        if re.match(r'^[+-]\d+$', rest):
+            # "10 +2" -> 10x 1d20+2
+            return repeat_count, f"1d20{rest}"
+        
+        # Check if rest contains dice
+        if 'd' in rest.lower():
+            return repeat_count, rest
+        
+        raise ValueError(f"Invalid notation after count: {rest}")
+    
+    # Case: first token contains 'd' -> dice notation
+    if 'd' in first_token.lower():
+        dice_expr = normalized
+        # Handle "d20" -> "1d20" (add implicit 1)
+        dice_expr = re.sub(r'(?<![0-9])d', '1d', dice_expr, flags=re.IGNORECASE)
         return 1, dice_expr
+    
+    # Case: no 'd' at all, not a number - check if it's modifier-like
+    raise ValueError(f"Invalid dice notation: {args}")
 
 
 def parse_char_command(args: str) -> int:
